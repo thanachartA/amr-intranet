@@ -34,10 +34,6 @@
             background-color: #f5f5f5;
         }
 
-        .sidebar-transition {
-            transition: margin-left 0.3s ease;
-        }
-
         .status-badge {
             display: inline-block;
             padding: 6px 12px;
@@ -73,7 +69,7 @@
             border-left: 4px solid #1a237e;
             padding: 20px;
             margin-bottom: 20px;
-            border-radius: 4px;
+            border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
 
@@ -222,6 +218,60 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
+        .icon-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            font-size: 24px;
+        }
+
+        .icon-badge-blue {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .icon-badge-amber {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+
+        .icon-badge-green {
+            background-color: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .icon-badge-purple {
+            background-color: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .pill-tab {
+            display: inline-block;
+            padding: 8px 16px;
+            margin-right: 8px;
+            border-radius: 20px;
+            border: 1px solid #e0e0e0;
+            background-color: white;
+            color: #666;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .pill-tab.active {
+            background-color: #1a237e;
+            color: white;
+            border-color: #1a237e;
+        }
+
+        .pill-tab:hover {
+            border-color: #1a237e;
+        }
+
         @media print {
             body {
                 background: white;
@@ -300,22 +350,48 @@
         const getStatusLabel = (status) => {
             const labels = {
                 'draft': 'ร่าง',
-                'submitted': 'ส่งอนุมัติ',
-                'pending_cpo_approval': 'รอ CPO อนุมัติ',
-                'pending_ceo_approval': 'รอ CEO อนุมัติ',
+                'submitted': 'รอการอนุมัติ',
+                'pending_cpo_approval': 'รอการอนุมัติ CPO',
+                'pending_ceo_approval': 'รอการอนุมัติ CEO',
                 'approved': 'อนุมัติแล้ว',
                 'rejected': 'ปฏิเสธ',
-                'recruiting': 'สรรหาจ้าง',
+                'recruiting': 'กำลังสรรหา',
                 'interview': 'สัมภาษณ์',
-                'offer': 'เสนองาน',
-                'hired': 'บรรจุแล้ว',
+                'offer': 'ส่งข้อเสนอ',
+                'hired': 'จ้างแล้ว',
                 'closed': 'ปิดแล้ว',
                 'cancelled': 'ยกเลิก',
             };
             return labels[status] || status;
         };
 
-        // Signature Pad Component — รองรับวาด, แนบไฟล์, และบันทึกรายบุคคล
+        // Create notification
+        const createNotification = async (userEmail, title, message, entityId) => {
+            try {
+                const { error } = await supabase
+                    .from('notifications')
+                    .insert([{
+                        user_email: userEmail,
+                        title: title,
+                        message: message,
+                        type: 'approval',
+                        is_read: false,
+                        entity_type: 'recruitment_requisition',
+                        entity_id: entityId,
+                        due_date: null,
+                        created_at: new Date().toISOString()
+                    }]);
+
+                if (error) {
+                    console.error('Notification creation error:', error);
+                } else {
+                    console.log('Notification created for ' + userEmail);
+                }
+            } catch (error) {
+                console.error('Error creating notification:', error);
+            }
+        };
+
         const SignaturePad = ({ onSave, readOnly = false, signature = null, userEmail = null }) => {
             const canvasRef = useRef(null);
             const containerRef = useRef(null);
@@ -326,56 +402,29 @@
             const [hasDrawn, setHasDrawn] = useState(false);
             const [loadingMsg, setLoadingMsg] = useState('');
 
-            // โหลดลายเซ็นที่บันทึกไว้จาก DB ตาม email
             useEffect(() => {
-                if (readOnly || !userEmail) return;
-                (async () => {
-                    try {
-                        const res = await fetch(
-                            `${SUPABASE_URL}/rest/v1/user_signatures?email=eq.${encodeURIComponent(userEmail)}&select=signature_data&limit=1`,
-                            { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } }
-                        );
-                        const data = await res.json();
-                        if (data && data.length > 0 && data[0].signature_data) {
-                            setSavedSig(data[0].signature_data);
-                            onSave(data[0].signature_data);
-                        }
-                    } catch(e) { console.log('Load sig err:', e); }
-                })();
-            }, [userEmail]);
-
-            // Init canvas เมื่อ mode = draw
-            useEffect(() => {
-                if (readOnly || mode !== 'draw') return;
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                // Responsive: ปรับ canvas ตาม container width
-                const container = containerRef.current;
-                if (container) {
-                    canvas.width = Math.min(container.offsetWidth, 600);
+                if (mode === 'draw' && canvasRef.current && !readOnly) {
+                    const canvas = canvasRef.current;
+                    const rect = containerRef.current.getBoundingClientRect();
+                    canvas.width = rect.width;
+                    canvas.height = 150;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#f9f9f9';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.strokeStyle = '#ccc';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([5, 5]);
+                    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
                 }
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#f9f9f9';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.strokeStyle = '#1a237e';
-                ctx.lineWidth = 2.5;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-            }, [readOnly, mode]);
+            }, [mode, readOnly]);
 
             const getPos = (e) => {
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const scaleX = canvas.width / rect.width;
-                const scaleY = canvas.height / rect.height;
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+                const rect = canvasRef.current.getBoundingClientRect();
+                return { x: e.clientX - rect.left, y: e.clientY - rect.top };
             };
 
             const startDraw = (e) => {
                 if (readOnly) return;
-                e.preventDefault();
                 setIsDrawing(true);
                 setHasDrawn(true);
                 const { x, y } = getPos(e);
@@ -386,9 +435,10 @@
 
             const draw = (e) => {
                 if (!isDrawing || readOnly) return;
-                e.preventDefault();
                 const { x, y } = getPos(e);
                 const ctx = canvasRef.current.getContext('2d');
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
                 ctx.lineTo(x, y);
                 ctx.stroke();
             };
@@ -400,213 +450,187 @@
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#f9f9f9';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.strokeStyle = '#ccc';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
                 setHasDrawn(false);
                 setSavedSig(null);
             };
 
-            // แนบไฟล์ภาพลายเซ็น
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                if (!file.type.startsWith('image/')) {
-                    alert('กรุณาเลือกไฟล์รูปภาพ (PNG, JPG)');
-                    return;
-                }
+
                 const reader = new FileReader();
-                reader.onload = (ev) => {
-                    setSavedSig(ev.target.result);
-                    onSave(ev.target.result);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = canvasRef.current;
+                        const ctx = canvas.getContext('2d');
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                        ctx.drawImage(img, 0, 0, img.width * scale, img.height * scale);
+                        setHasDrawn(true);
+                    };
+                    img.src = event.target.result;
                 };
                 reader.readAsDataURL(file);
             };
 
-            // บันทึกลายเซ็น — save ลง DB ต่อ email + ส่งกลับ form
             const handleSave = async () => {
-                let sigData;
-                if (mode === 'draw') {
-                    const canvas = canvasRef.current;
-                    sigData = canvas.toDataURL('image/png');
-                } else if (savedSig) {
-                    sigData = savedSig;
-                } else {
-                    alert('กรุณาวาดหรืออัพโหลดลายเซ็นก่อน');
+                if (!hasDrawn && !savedSig) {
+                    alert('กรุณากำหนดลายเซ็น');
                     return;
                 }
+                setLoadingMsg('กำลังอัปโหลด...');
+                const canvas = canvasRef.current;
+                const sigData = canvas.toDataURL('image/png');
                 setSavedSig(sigData);
-                onSave(sigData);
-
-                // บันทึกลง Supabase per user
-                if (userEmail) {
-                    setLoadingMsg('กำลังบันทึก...');
-                    try {
-                        await fetch(`${SUPABASE_URL}/rest/v1/user_signatures`, {
-                            method: 'POST',
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-                                'Content-Type': 'application/json',
-                                'Prefer': 'resolution=merge-duplicates'
-                            },
-                            body: JSON.stringify({ email: userEmail, signature_data: sigData })
-                        });
-                        setLoadingMsg('✅ บันทึกลายเซ็นเรียบร้อย');
-                    } catch(e) {
-                        setLoadingMsg('❌ บันทึกไม่สำเร็จ');
-                    }
-                    setTimeout(() => setLoadingMsg(''), 2000);
-                }
+                setLoadingMsg('');
+                if (onSave) onSave(sigData);
             };
 
-            if (readOnly && (signature || savedSig)) {
+            if (readOnly && savedSig) {
                 return (
-                    <div className="signature-display" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: '#f9f9f9' }}>
-                        <img src={signature || savedSig} alt="signature" style={{ maxWidth: '100%', maxHeight: '120px', objectFit: 'contain' }} />
+                    <div className="signature-display p-4 rounded-lg bg-gray-50">
+                        <img src={savedSig} alt="Signature" className="max-h-24 max-w-full" />
                     </div>
                 );
             }
 
             return (
-                <div ref={containerRef}>
-                    {/* แสดงลายเซ็นที่บันทึกไว้ */}
-                    {savedSig && (
-                        <div style={{ marginBottom: '12px', padding: '8px', border: '2px solid #4caf50', borderRadius: '8px', background: '#e8f5e9', textAlign: 'center' }}>
-                            <div style={{ fontSize: '12px', color: '#2e7d32', fontWeight: '600', marginBottom: '4px' }}>✅ ลายเซ็นปัจจุบัน</div>
-                            <img src={savedSig} alt="saved signature" style={{ maxWidth: '100%', maxHeight: '80px', objectFit: 'contain' }} />
-                        </div>
-                    )}
-
-                    {/* Toggle mode: วาด / แนบไฟล์ */}
-                    <div className="flex gap-2 mb-3">
-                        <button
-                            onClick={() => setMode('draw')}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition ${mode === 'draw' ? 'bg-blue-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
-                        >
-                            ✏️ วาดลายเซ็น
-                        </button>
-                        <button
-                            onClick={() => setMode('upload')}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition ${mode === 'upload' ? 'bg-blue-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
-                        >
-                            📎 แนบไฟล์ภาพ
-                        </button>
-                    </div>
-
-                    {mode === 'draw' ? (
-                        <div>
-                            <canvas
-                                ref={canvasRef}
-                                width={500}
-                                height={150}
-                                style={{ width: '100%', height: '150px', border: '2px solid #ccc', cursor: 'crosshair', background: '#f9f9f9', borderRadius: '4px', touchAction: 'none' }}
-                                onMouseDown={startDraw}
-                                onMouseMove={draw}
-                                onMouseUp={endDraw}
-                                onMouseLeave={endDraw}
-                                onTouchStart={startDraw}
-                                onTouchMove={draw}
-                                onTouchEnd={endDraw}
-                            />
-                            <div className="flex gap-2 mt-2">
-                                <button onClick={handleClear} className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 text-sm">
-                                    🗑️ ล้างลายเซ็น
-                                </button>
-                                <button onClick={handleSave} disabled={!hasDrawn} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 text-sm">
-                                    💾 บันทึกลายเซ็น
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div>
-                            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} />
-                            <div
-                                onClick={() => fileInputRef.current.click()}
-                                style={{ border: '2px dashed #90caf9', borderRadius: '8px', padding: '30px', textAlign: 'center', cursor: 'pointer', background: '#e3f2fd', transition: 'all 0.2s' }}
-                                onMouseOver={e => e.currentTarget.style.borderColor = '#1565c0'}
-                                onMouseOut={e => e.currentTarget.style.borderColor = '#90caf9'}
+                <div ref={containerRef} className="space-y-3">
+                    {!readOnly && (
+                        <div className="flex gap-2 mb-2">
+                            <button
+                                onClick={() => setMode('draw')}
+                                className={`px-3 py-1 rounded text-sm ${mode === 'draw' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
                             >
-                                <div style={{ fontSize: '36px', marginBottom: '8px' }}>📤</div>
-                                <div style={{ color: '#1565c0', fontWeight: '600' }}>คลิกเพื่อเลือกไฟล์ภาพลายเซ็น</div>
-                                <div style={{ color: '#666', fontSize: '12px', marginTop: '4px' }}>รองรับ PNG, JPG, GIF</div>
-                            </div>
-                            <button onClick={handleSave} disabled={!savedSig} className="w-full mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 text-sm">
-                                💾 บันทึกลายเซ็น
+                                วาด
+                            </button>
+                            <button
+                                onClick={() => setMode('upload')}
+                                className={`px-3 py-1 rounded text-sm ${mode === 'upload' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
+                            >
+                                อัปโหลด
                             </button>
                         </div>
                     )}
 
-                    {loadingMsg && (
-                        <div style={{ marginTop: '8px', textAlign: 'center', fontSize: '13px', color: loadingMsg.includes('✅') ? '#2e7d32' : loadingMsg.includes('❌') ? '#c62828' : '#666' }}>
-                            {loadingMsg}
+                    {mode === 'draw' && (
+                        <>
+                            <canvas
+                                ref={canvasRef}
+                                onMouseDown={startDraw}
+                                onMouseMove={draw}
+                                onMouseUp={endDraw}
+                                onMouseLeave={endDraw}
+                                className="signature-canvas w-full border border-gray-300 rounded-lg cursor-crosshair"
+                            />
+                            {!readOnly && (
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleClear}
+                                        className="px-4 py-2 bg-gray-400 text-white rounded-lg text-sm hover:bg-gray-500"
+                                    >
+                                        ล้าง
+                                    </button>
+                                    <button
+                                        onClick={handleSave}
+                                        disabled={!hasDrawn}
+                                        className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+                                    >
+                                        {loadingMsg || 'บันทึก'}
+                                    </button>
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {mode === 'upload' && !readOnly && (
+                        <>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleFileUpload}
+                                className="block w-full text-sm border border-gray-300 rounded-lg p-2"
+                            />
+                            <button
+                                onClick={handleSave}
+                                disabled={!hasDrawn}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50"
+                            >
+                                {loadingMsg || 'บันทึก'}
+                            </button>
+                        </>
+                    )}
+
+                    {savedSig && !readOnly && (
+                        <div className="signature-display p-2 rounded-lg bg-gray-50">
+                            <img src={savedSig} alt="Signature" className="max-h-20 max-w-full" />
                         </div>
                     )}
                 </div>
             );
         };
 
-        // Workflow Steps Component
         const WorkflowSteps = ({ currentStatus }) => {
-            const steps = [
-                { key: 'draft', label: 'สร้างคำขอ', thaiLabel: 'สร้าง' },
-                { key: 'submitted', label: 'ส่งอนุมัติ', thaiLabel: 'ส่ง' },
-                { key: 'pending_cpo_approval', label: 'CPO อนุมัติ', thaiLabel: 'CPO' },
-                { key: 'pending_ceo_approval', label: 'CEO อนุมัติ', thaiLabel: 'CEO' },
-                { key: 'approved', label: 'สรรหาจ้าง', thaiLabel: 'สรรหา' },
-                { key: 'recruiting', label: 'สัมภาษณ์', thaiLabel: 'สัมภาษณ์' },
-                { key: 'interview', label: 'เสนองาน', thaiLabel: 'เสนอ' },
-                { key: 'offer', label: 'บรรจุ', thaiLabel: 'บรรจุ' },
+            const statusOrder = [
+                'draft',
+                'submitted',
+                'pending_cpo_approval',
+                'pending_ceo_approval',
+                'approved',
+                'recruiting'
             ];
 
-            const statusOrder = ['draft', 'submitted', 'pending_cpo_approval', 'pending_ceo_approval', 'approved', 'recruiting', 'interview', 'offer', 'hired', 'closed'];
+            const statusLabels = {
+                'draft': 'ร่าง',
+                'submitted': 'ส่งเรื่อง',
+                'pending_cpo_approval': 'รอ CPO',
+                'pending_ceo_approval': 'รอ CEO',
+                'approved': 'อนุมัติแล้ว',
+                'recruiting': 'สรรหา'
+            };
+
             const currentIndex = statusOrder.indexOf(currentStatus);
 
             return (
-                <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-                    <div className="flex justify-between items-center">
-                        {steps.map((step, idx) => {
-                            const isCompleted = idx < currentIndex;
-                            const isActive = idx === currentIndex;
-
-                            return (
-                                <div key={step.key} className="workflow-step flex-1">
-                                    {idx > 0 && (
-                                        <div
-                                            className="workflow-step-line"
-                                            style={{
-                                                backgroundColor: isCompleted ? '#4caf50' : (isActive || idx < currentIndex) ? '#1a237e' : '#e0e0e0',
-                                                width: 'calc(100% - 40px)',
-                                            }}
-                                        />
-                                    )}
-                                    <div className={`step-circle ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
-                                        {isCompleted ? '✓' : (idx + 1)}
-                                    </div>
-                                    <div className="workflow-step-label mt-2 text-xs">{step.thaiLabel}</div>
+                <div className="bg-white p-6 rounded-xl shadow-sm">
+                    <div className="flex items-center justify-between">
+                        {statusOrder.map((status, index) => (
+                            <div key={status} className="workflow-step">
+                                {index < statusOrder.length - 1 && (
+                                    <div className={`workflow-step-line ${index < currentIndex ? 'completed' : index === currentIndex ? 'active' : ''}`} />
+                                )}
+                                <div className={`step-circle ${index < currentIndex ? 'completed' : index === currentIndex ? 'active' : ''}`}>
+                                    {index < currentIndex ? '✓' : index + 1}
                                 </div>
-                            );
-                        })}
+                                <div className="workflow-step-label">{statusLabels[status]}</div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             );
         };
 
-        // PDF Export Component
         const PDFExporter = ({ requisition }) => {
             const containerRef = useRef(null);
 
             const exportToPDF = async () => {
-                if (!containerRef.current) return;
-
                 try {
-                    const canvas = await html2canvas(containerRef.current, {
+                    const element = containerRef.current;
+                    const canvas = await html2canvas(element, {
                         scale: 2,
-                        useCORS: true,
                         logging: false,
+                        useCORS: true
                     });
 
                     const imgData = canvas.toDataURL('image/png');
                     const imgWidth = 210; // A4 width in mm
                     const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
                     const pdf = new jspdf.jsPDF({
                         orientation: 'portrait',
                         unit: 'mm',
@@ -626,286 +650,91 @@
                         heightLeft -= 297;
                     }
 
-                    pdf.save(`F-HRM-0101_${requisition.requisition_no || 'DRAFT'}.pdf`);
+                    pdf.save(`requisition-${requisition.requisition_no}.pdf`);
                 } catch (error) {
                     console.error('PDF Export Error:', error);
-                    alert('เกิดข้อผิดพลาดในการสร้าง PDF');
+                    alert('เกิดข้อผิดพลาดในการส่งออก PDF');
                 }
             };
 
             return (
-                <>
-                    <button
-                        onClick={exportToPDF}
-                        className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 font-semibold"
-                    >
-                        📥 ส่งออก PDF
-                    </button>
-
-                    <div ref={containerRef} style={{ position: 'absolute', left: '-9999px', top: '0', width: '794px', background: 'white', padding: '30px' }}>
-                        <PDFContent requisition={requisition} />
-                    </div>
-                </>
+                <button
+                    onClick={exportToPDF}
+                    className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold"
+                >
+                    📄 ดาวน์โหลด PDF
+                </button>
             );
         };
 
-        // PDF Content - Formatted for printing
         const PDFContent = ({ requisition }) => {
             const formatDate = (date) => {
-                if (!date) return '';
-                const d = new Date(date);
-                return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+                if (!date) return '-';
+                return new Date(date).toLocaleDateString('th-TH', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
             };
 
             return (
-                <div className="pdf-container" style={{ fontFamily: "'Noto Sans Thai', sans-serif", fontSize: '11px' }}>
-                    {/* Header */}
-                    <div className="pdf-header" style={{ borderBottom: '2px solid #1a237e', paddingBottom: '15px', marginBottom: '20px' }}>
-                        <div className="pdf-company-name" style={{ fontSize: '16px', fontWeight: '700', marginBottom: '5px' }}>
-                            บริษัท เอเอ็มอาร์ เอเซีย จำกัด (มหาชน)
-                        </div>
-                        <div className="pdf-company-name" style={{ fontSize: '14px', fontWeight: '700', marginBottom: '10px' }}>
-                            AMR Asia Public Company Limited
-                        </div>
-                        <div className="pdf-form-title" style={{ fontSize: '14px', fontWeight: '600', marginBottom: '3px' }}>
-                            แบบฟอร์มเสนอขอพนักงาน
-                        </div>
-                        <div className="pdf-form-subtitle" style={{ fontSize: '13px', color: '#555' }}>
-                            MANPOWER REQUISITION FORM
-                        </div>
-                        <div className="pdf-form-number" style={{ fontSize: '10px', color: '#999', marginTop: '5px', textAlign: 'right' }}>
-                            F-HRM-0101 rev.00
-                        </div>
+                <div className="pdf-container">
+                    <div className="pdf-header">
+                        <div className="pdf-company-name">AMR ASIA</div>
+                        <div className="pdf-form-title">แบบฟอร์มการขอสรรหาและจ้างพนักงาน</div>
+                        <div className="pdf-form-subtitle">Recruitment Requisition Form</div>
+                        <div className="pdf-form-number">Form #: {requisition.requisition_no}</div>
                     </div>
 
-                    {/* Basic Information */}
-                    <div className="pdf-section-header" style={{ fontSize: '12px', fontWeight: '700', backgroundColor: '#1a237e', color: 'white', padding: '8px', marginTop: '15px', marginBottom: '10px' }}>
-                        ข้อมูลทั่วไป / BASIC INFORMATION
+                    <div className="pdf-section-header">ข้อมูลตำแหน่งงาน</div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">ชื่อตำแหน่ง</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.position_title}</div>
                     </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>เลขที่คำขอ / Req No</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.requisition_no || '(ระบบสร้างอัตโนมัติ)'}</div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>วันที่ยื่นคำขอ / Request Date</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{formatDate(requisition.request_date)}</div>
-                        </div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">แผนก</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.department}</div>
                     </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ตำแหน่ง / Position Title</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.position_title}</div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>แผนก / Department</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.department}</div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">ประเภท</div>
+                        <div className="pdf-col pdf-col-value w-1/2">
+                            {requisition.requisition_type === 'new_position' ? 'ตำแหน่งใหม่' : 'ทดแทน'}
                         </div>
                     </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ประเภท / Type</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>
-                                {requisition.requisition_type === 'new_position' ? 'ตำแหน่งใหม่' : 'ทดแทน'}
-                            </div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ประเภทงาน / Employment</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>
-                                {requisition.employment_type === 'full_time' ? 'ประจำ' : 'ชั่วคราว'}
-                            </div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ประสบการณ์ / Experience</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.years_of_experience} ปี</div>
-                        </div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">ประสบการณ์ (ปี)</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.years_of_experience}</div>
+                    </div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">การศึกษา</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.education_background}</div>
                     </div>
 
-                    {/* Education & Replacement Info */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>วุฒิการศึกษา / Education</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.education_background || '-'}</div>
-                        </div>
-                        {requisition.requisition_type === 'replacement' && (
-                            <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ชื่อพนักงานที่ทดแทน / Replacing</div>
-                                <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.replacement_name || '-'}</div>
-                            </div>
-                        )}
+                    <div className="pdf-section-header">ข้อมูลผู้ยื่นคำขอ</div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">ชื่อ</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.requested_by_name}</div>
                     </div>
-
-                    {/* Justification */}
-                    <div style={{ border: '1px solid #999', padding: '6px', marginBottom: '8px' }}>
-                        <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>เหตุผลในการขอ / Justification</div>
-                        <div style={{ padding: '8px', backgroundColor: '#fff', minHeight: '40px', whiteSpace: 'pre-wrap' }}>{requisition.justification || '-'}</div>
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">ตำแหน่ง</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{requisition.requested_by_position}</div>
                     </div>
-
-                    {/* Requester Section */}
-                    <div className="pdf-section-header" style={{ fontSize: '12px', fontWeight: '700', backgroundColor: '#1a237e', color: 'white', padding: '8px', marginTop: '15px', marginBottom: '10px' }}>
-                        ผู้ยื่นคำขอ / REQUESTER INFORMATION
+                    <div className="pdf-row">
+                        <div className="pdf-col pdf-col-label w-1/2">วันที่</div>
+                        <div className="pdf-col pdf-col-value w-1/2">{formatDate(requisition.requested_by_date)}</div>
                     </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ชื่อ / Name</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.requested_by_name}</div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ตำแหน่ง / Position</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.requested_by_position}</div>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>อีเมล / Email</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff', fontSize: '10px' }}>{requisition.requested_by_email}</div>
-                        </div>
-                        <div style={{ border: '1px solid #999', padding: '6px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>วันที่ / Date</div>
-                            <div style={{ padding: '4px', backgroundColor: '#fff' }}>{formatDate(requisition.requested_by_date)}</div>
-                        </div>
-                    </div>
-
-                    {/* Requester Signature */}
                     {requisition.requested_by_signature && (
-                        <div style={{ border: '1px solid #999', padding: '6px', marginBottom: '8px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px', marginBottom: '8px' }}>ลายเซ็นผู้เสนอขอ / Requester Signature</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', padding: '4px', backgroundColor: '#fff' }}>
-                                <img src={requisition.requested_by_signature} alt="Requester Signature" style={{ maxHeight: '60px', objectFit: 'contain' }} />
-                                <div style={{ fontSize: '10px', color: '#555' }}>
-                                    <div>{requisition.requested_by_name}</div>
-                                    <div>{requisition.requested_by_position}</div>
-                                </div>
+                        <div className="pdf-row">
+                            <div className="pdf-col pdf-col-label w-1/2">ลายเซ็น</div>
+                            <div className="pdf-col pdf-col-value w-1/2 pdf-signature-box">
+                                <img src={requisition.requested_by_signature} alt="Signature" className="pdf-signature-image" />
                             </div>
                         </div>
                     )}
-
-                    {/* CPO Approval Section */}
-                    {requisition.cpo_approved_by && (
-                        <>
-                            <div className="pdf-section-header" style={{ fontSize: '12px', fontWeight: '700', backgroundColor: '#1a237e', color: 'white', padding: '8px', marginTop: '15px', marginBottom: '10px' }}>
-                                การอนุมัติ CPO / CPO APPROVAL
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>อนุมัติแล้ว / Approved Headcount</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.approved_manpower}</div>
-                                </div>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>จำนวนปัจจุบัน / Current Headcount</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.current_headcount}</div>
-                                </div>
-                            </div>
-
-                            <div style={{ border: '1px solid #999', padding: '6px', marginBottom: '8px' }}>
-                                <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>หมายเหตุ CPO / CPO Comments</div>
-                                <div style={{ padding: '4px', backgroundColor: '#fff', minHeight: '30px', whiteSpace: 'pre-wrap' }}>{requisition.cpo_comments}</div>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ผู้อนุมัติ / Approved By</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.cpo_approved_by}</div>
-                                </div>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>สถานะ / Status</div>
-                                    <div style={{ padding: '4px', backgroundColor: requisition.cpo_status === 'approved' ? '#c8e6c9' : requisition.cpo_status === 'rejected' ? '#ffcdd2' : '#fff9c4' }}>
-                                        {requisition.cpo_status === 'approved' ? '✅ อนุมัติแล้ว' : requisition.cpo_status === 'rejected' ? '❌ ไม่อนุมัติ' : '⏳ รอดำเนินการ'}
-                                    </div>
-                                </div>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>วันที่ / Date</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{formatDate(requisition.cpo_approved_date)}</div>
-                                </div>
-                            </div>
-
-                            {/* CPO Signature */}
-                            {requisition.cpo_signature && (
-                                <div style={{ border: '1px solid #999', padding: '10px', marginBottom: '8px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px', marginBottom: '8px' }}>ลายเซ็น CPO / CPO Signature</div>
-                                    <div style={{ textAlign: 'center' }}>
-                                        <img src={requisition.cpo_signature} alt="CPO Signature" style={{ maxHeight: '80px' }} />
-                                    </div>
-                                    <div style={{ textAlign: 'center', fontSize: '10px', color: '#555', marginTop: '4px' }}>
-                                        {requisition.cpo_approved_by} - (Chief People Officer / HR Manager)
-                                    </div>
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {/* Requester Signature */}
-                    {requisition.requested_by_signature && (
-                        <div style={{ border: '1px solid #999', padding: '10px', marginBottom: '8px' }}>
-                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px', marginBottom: '8px' }}>ลายเซ็นผู้เสนอขอ / Requester Signature</div>
-                            <div style={{ textAlign: 'center' }}>
-                                <img src={requisition.requested_by_signature} alt="Requester Signature" style={{ maxHeight: '80px' }} />
-                            </div>
-                            <div style={{ textAlign: 'center', fontSize: '10px', color: '#555', marginTop: '4px' }}>
-                                {requisition.requested_by_name} - {requisition.requested_by_position}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* CEO Approval Section */}
-                    {requisition.requisition_type === 'new_position' && (
-                        <>
-                            <div className="pdf-section-header" style={{ fontSize: '12px', fontWeight: '700', backgroundColor: '#1a237e', color: 'white', padding: '8px', marginTop: '15px', marginBottom: '10px' }}>
-                                การอนุมัติ CEO / CEO APPROVAL
-                            </div>
-
-                            <div style={{ border: '1px solid #999', padding: '6px', marginBottom: '8px' }}>
-                                <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>หมายเหตุ CEO / CEO Comments</div>
-                                <div style={{ padding: '4px', backgroundColor: '#fff', minHeight: '30px', whiteSpace: 'pre-wrap' }}>{requisition.ceo_comments || '-'}</div>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>ผู้อนุมัติ / Approved By</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{requisition.ceo_approved_by || '-'}</div>
-                                </div>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>สถานะ / Status</div>
-                                    <div style={{ padding: '4px', backgroundColor: requisition.ceo_status === 'approved' ? '#c8e6c9' : requisition.ceo_status === 'rejected' ? '#ffcdd2' : '#fff9c4' }}>
-                                        {requisition.ceo_status === 'approved' ? '✅ อนุมัติแล้ว' : requisition.ceo_status === 'rejected' ? '❌ ไม่อนุมัติ' : requisition.ceo_status === 'not_required' ? 'N/A' : '⏳ รอดำเนินการ'}
-                                    </div>
-                                </div>
-                                <div style={{ border: '1px solid #999', padding: '6px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px' }}>วันที่ / Date</div>
-                                    <div style={{ padding: '4px', backgroundColor: '#fff' }}>{formatDate(requisition.ceo_approved_date) || '-'}</div>
-                                </div>
-                            </div>
-
-                            {/* CEO Signature */}
-                            {requisition.ceo_signature && (
-                                <div style={{ border: '1px solid #999', padding: '10px', marginBottom: '8px' }}>
-                                    <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px', marginBottom: '8px' }}>ลายเซ็น CEO / CEO Signature</div>
-                                    <div style={{ textAlign: 'center' }}>
-                                        <img src={requisition.ceo_signature} alt="CEO Signature" style={{ maxHeight: '80px' }} />
-                                    </div>
-                                    <div style={{ textAlign: 'center', fontSize: '10px', color: '#555', marginTop: '4px' }}>
-                                        {requisition.ceo_approved_by} - ประธานเจ้าหน้าที่บริหาร (CEO)
-                                    </div>
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {/* Footer */}
-                    <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '1px solid #ccc', textAlign: 'center', fontSize: '9px', color: '#999' }}>
-                        INTERNAL USE ONLY
-                    </div>
                 </div>
             );
         };
 
-        // Requisition Form Component
         const RequisitionForm = ({ initialData = null, onSave }) => {
             const [formData, setFormData] = useState(initialData || {
                 position_title: '',
@@ -966,6 +795,31 @@
                             .select();
 
                         if (error) throw error;
+
+                        // If submitted (not draft), create notifications
+                        if (!isDraft && data && data.length > 0) {
+                            const requisition = data[0];
+                            const positionTitle = formData.position_title;
+                            const department = formData.department;
+                            const reqNo = requisition.requisition_no;
+
+                            // Notify CEO
+                            await createNotification(
+                                'ceo@amrasia.com',
+                                'คำขอสรรหาพนักงานใหม่',
+                                `มีคำขอสรรหาตำแหน่ง ${positionTitle} แผนก ${department} รอการอนุมัติ (เลขที่ ${reqNo})`,
+                                requisition.id
+                            );
+
+                            // Notify CPO
+                            await createNotification(
+                                'thanachart.p@amrasia.com',
+                                'คำขอสรรหาพนักงานใหม่',
+                                `มีคำขอสรรหาตำแหน่ง ${positionTitle} แผนก ${department} รอการอนุมัติ (เลขที่ ${reqNo})`,
+                                requisition.id
+                            );
+                        }
+
                         alert('บันทึกสำเร็จ');
                         onSave(data[0]);
                     } else {
@@ -980,6 +834,31 @@
                             .select();
 
                         if (error) throw error;
+
+                        // If status changed from draft to submitted, create notifications
+                        if (!isDraft && initialData.status === 'draft' && data && data.length > 0) {
+                            const requisition = data[0];
+                            const positionTitle = formData.position_title;
+                            const department = formData.department;
+                            const reqNo = requisition.requisition_no;
+
+                            // Notify CEO
+                            await createNotification(
+                                'ceo@amrasia.com',
+                                'คำขอสรรหาพนักงานใหม่',
+                                `มีคำขอสรรหาตำแหน่ง ${positionTitle} แผนก ${department} รอการอนุมัติ (เลขที่ ${reqNo})`,
+                                requisition.id
+                            );
+
+                            // Notify CPO
+                            await createNotification(
+                                'thanachart.p@amrasia.com',
+                                'คำขอสรรหาพนักงานใหม่',
+                                `มีคำขอสรรหาตำแหน่ง ${positionTitle} แผนก ${department} รอการอนุมัติ (เลขที่ ${reqNo})`,
+                                requisition.id
+                            );
+                        }
+
                         alert('อัปเดตสำเร็จ');
                         onSave(data[0]);
                     }
@@ -1252,7 +1131,7 @@
         // Main App Component
         const App = () => {
             const [currentPage, setCurrentPage] = useState('dashboard');
-            const [sidebarOpen, setSidebarOpen] = useState(true);
+            const [currentTab, setCurrentTab] = useState('dashboard');
             const [requisitions, setRequisitions] = useState([]);
             const [selectedRequisition, setSelectedRequisition] = useState(null);
             const [loading, setLoading] = useState(false);
@@ -1304,7 +1183,9 @@
                         return [newRequisition, ...prev];
                     }
                 });
-                setCurrentPage('requisitions');
+                setCurrentPage('dashboard');
+                setCurrentTab('dashboard');
+                loadDashboard();
             };
 
             const handleViewRequisition = (req) => {
@@ -1312,51 +1193,124 @@
                 setCurrentPage('detail');
             };
 
+            const renderPageHeader = (title, subtitle, icon) => (
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="icon-badge icon-badge-blue text-2xl">
+                        {icon}
+                    </div>
+                    <div>
+                        <h1 className="text-4xl font-bold text-primary">{title}</h1>
+                        <p className="text-gray-600 text-sm mt-1">{subtitle}</p>
+                    </div>
+                </div>
+            );
+
             const renderDashboard = () => (
                 <div className="space-y-6">
-                    <h1 className="text-3xl font-bold text-primary">ระบบการสรรหาพนักงาน</h1>
+                    {renderPageHeader('Recruitment', 'ระบบสรรหาและคัดเลือกพนักงาน', '👥')}
 
-                    {/* Statistics */}
+                    {/* Statistics Cards */}
                     <div className="grid grid-cols-4 gap-4">
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="text-gray-500 text-sm font-semibold">รวมทั้งหมด</div>
-                            <div className="text-3xl font-bold text-primary mt-2">{stats.total}</div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm">
+                            <div className="flex items-center gap-4">
+                                <div className="icon-badge icon-badge-blue">
+                                    📊
+                                </div>
+                                <div>
+                                    <p className="text-gray-600 text-sm font-medium">รวมทั้งหมด</p>
+                                    <p className="text-3xl font-bold text-primary mt-1">{stats.total}</p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="text-gray-500 text-sm font-semibold">รอการอนุมัติ</div>
-                            <div className="text-3xl font-bold text-amber-600 mt-2">{stats.pending}</div>
+
+                        <div className="bg-white p-6 rounded-xl shadow-sm">
+                            <div className="flex items-center gap-4">
+                                <div className="icon-badge icon-badge-amber">
+                                    ⏳
+                                </div>
+                                <div>
+                                    <p className="text-gray-600 text-sm font-medium">รอการอนุมัติ</p>
+                                    <p className="text-3xl font-bold text-amber-600 mt-1">{stats.pending}</p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="text-gray-500 text-sm font-semibold">อนุมัติแล้ว</div>
-                            <div className="text-3xl font-bold text-green-600 mt-2">{stats.approved}</div>
+
+                        <div className="bg-white p-6 rounded-xl shadow-sm">
+                            <div className="flex items-center gap-4">
+                                <div className="icon-badge icon-badge-green">
+                                    ✓
+                                </div>
+                                <div>
+                                    <p className="text-gray-600 text-sm font-medium">อนุมัติแล้ว</p>
+                                    <p className="text-3xl font-bold text-green-600 mt-1">{stats.approved}</p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="text-gray-500 text-sm font-semibold">กำลังสรรหา</div>
-                            <div className="text-3xl font-bold text-purple-600 mt-2">{stats.recruiting}</div>
+
+                        <div className="bg-white p-6 rounded-xl shadow-sm">
+                            <div className="flex items-center gap-4">
+                                <div className="icon-badge icon-badge-purple">
+                                    🔍
+                                </div>
+                                <div>
+                                    <p className="text-gray-600 text-sm font-medium">กำลังสรรหา</p>
+                                    <p className="text-3xl font-bold text-purple-600 mt-1">{stats.recruiting}</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    {/* Recent Requisitions */}
-                    <div className="bg-white p-6 rounded-lg shadow-md">
+                    {/* Tab Navigation */}
+                    <div className="flex items-center justify-between">
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => { setCurrentPage('dashboard'); setCurrentTab('dashboard'); }}
+                                className={`pill-tab ${currentTab === 'dashboard' ? 'active' : ''}`}
+                            >
+                                แดชบอร์ด
+                            </button>
+                            <button
+                                onClick={() => { setCurrentPage('requisitions'); setCurrentTab('requisitions'); }}
+                                className={`pill-tab ${currentTab === 'requisitions' ? 'active' : ''}`}
+                            >
+                                คำขอทั้งหมด
+                            </button>
+                            <button
+                                onClick={() => { setCurrentPage('candidates'); setCurrentTab('candidates'); }}
+                                className={`pill-tab ${currentTab === 'candidates' ? 'active' : ''}`}
+                            >
+                                ผู้สมัคร
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => setCurrentPage('create')}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold flex items-center gap-2"
+                        >
+                            + สร้างคำขอใหม่
+                        </button>
+                    </div>
+
+                    {/* Recent Requisitions Table */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm">
                         <h2 className="text-xl font-bold mb-4 text-primary">คำขอล่าสุด</h2>
                         {requisitions.length === 0 ? (
                             <p className="text-gray-500">ไม่มีข้อมูล</p>
                         ) : (
                             <table className="w-full text-sm">
-                                <thead className="bg-gray-100 border-b">
+                                <thead className="bg-gray-50 border-b">
                                     <tr>
-                                        <th className="text-left p-3 font-semibold">เลขที่คำขอ</th>
-                                        <th className="text-left p-3 font-semibold">ตำแหน่ง</th>
-                                        <th className="text-left p-3 font-semibold">แผนก</th>
-                                        <th className="text-left p-3 font-semibold">สถานะ</th>
-                                        <th className="text-left p-3 font-semibold">วันที่</th>
-                                        <th className="text-center p-3 font-semibold">การกระทำ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">เลขที่คำขอ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">ตำแหน่ง</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">แผนก</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">สถานะ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">วันที่</th>
+                                        <th className="text-center p-3 font-semibold text-gray-700">การกระทำ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {requisitions.slice(0, 10).map(req => (
                                         <tr key={req.id} className="border-b hover:bg-gray-50">
-                                            <td className="p-3 font-mono">{req.requisition_no || 'DRAFT'}</td>
+                                            <td className="p-3 font-mono text-gray-700">{req.requisition_no || 'DRAFT'}</td>
                                             <td className="p-3">{req.position_title}</td>
                                             <td className="p-3">{req.department}</td>
                                             <td className="p-3">
@@ -1386,36 +1340,58 @@
 
             const renderRequisitionList = () => (
                 <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                        <h1 className="text-3xl font-bold text-primary">คำขอพนักงาน</h1>
+                    {renderPageHeader('Recruitment', 'ระบบสรรหาและคัดเลือกพนักงาน', '👥')}
+
+                    {/* Tab Navigation */}
+                    <div className="flex items-center justify-between">
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => { setCurrentPage('dashboard'); setCurrentTab('dashboard'); }}
+                                className={`pill-tab ${currentTab === 'dashboard' ? 'active' : ''}`}
+                            >
+                                แดชบอร์ด
+                            </button>
+                            <button
+                                onClick={() => { setCurrentPage('requisitions'); setCurrentTab('requisitions'); }}
+                                className={`pill-tab ${currentTab === 'requisitions' ? 'active' : ''}`}
+                            >
+                                คำขอทั้งหมด
+                            </button>
+                            <button
+                                onClick={() => { setCurrentPage('candidates'); setCurrentTab('candidates'); }}
+                                className={`pill-tab ${currentTab === 'candidates' ? 'active' : ''}`}
+                            >
+                                ผู้สมัคร
+                            </button>
+                        </div>
                         <button
                             onClick={() => setCurrentPage('create')}
-                            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold flex items-center gap-2"
                         >
                             + สร้างคำขอใหม่
                         </button>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md">
+                    <div className="bg-white p-6 rounded-xl shadow-sm">
                         {requisitions.length === 0 ? (
                             <p className="text-gray-500">ไม่มีข้อมูล</p>
                         ) : (
                             <table className="w-full text-sm">
-                                <thead className="bg-gray-100 border-b">
+                                <thead className="bg-gray-50 border-b">
                                     <tr>
-                                        <th className="text-left p-3 font-semibold">เลขที่คำขอ</th>
-                                        <th className="text-left p-3 font-semibold">ตำแหน่ง</th>
-                                        <th className="text-left p-3 font-semibold">แผนก</th>
-                                        <th className="text-left p-3 font-semibold">ประเภท</th>
-                                        <th className="text-left p-3 font-semibold">สถานะ</th>
-                                        <th className="text-left p-3 font-semibold">วันที่</th>
-                                        <th className="text-center p-3 font-semibold">การกระทำ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">เลขที่คำขอ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">ตำแหน่ง</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">แผนก</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">ประเภท</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">สถานะ</th>
+                                        <th className="text-left p-3 font-semibold text-gray-700">วันที่</th>
+                                        <th className="text-center p-3 font-semibold text-gray-700">การกระทำ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {requisitions.map(req => (
                                         <tr key={req.id} className="border-b hover:bg-gray-50">
-                                            <td className="p-3 font-mono">{req.requisition_no || 'DRAFT'}</td>
+                                            <td className="p-3 font-mono text-gray-700">{req.requisition_no || 'DRAFT'}</td>
                                             <td className="p-3">{req.position_title}</td>
                                             <td className="p-3">{req.department}</td>
                                             <td className="p-3 text-sm">
@@ -1447,8 +1423,16 @@
             );
 
             const renderCreateForm = () => (
-                <div>
-                    <h1 className="text-3xl font-bold text-primary mb-6">สร้างคำขอพนักงานใหม่</h1>
+                <div className="space-y-6">
+                    {renderPageHeader('Recruitment', 'ระบบสรรหาและคัดเลือกพนักงาน', '👥')}
+
+                    {/* Breadcrumb */}
+                    <div className="text-sm text-gray-600 mb-4">
+                        <button onClick={() => setCurrentPage('dashboard')} className="text-blue-600 hover:underline">Recruitment</button>
+                        <span className="mx-2">›</span>
+                        <span>สร้างคำขอใหม่</span>
+                    </div>
+
                     <RequisitionForm onSave={handleRequisitionSaved} />
                 </div>
             );
@@ -1458,12 +1442,14 @@
 
                 return (
                     <div className="space-y-6">
-                        <div className="flex justify-between items-center">
+                        {renderPageHeader('Recruitment', 'ระบบสรรหาและคัดเลือกพนักงาน', '👥')}
+
+                        <div className="flex justify-between items-start">
                             <div>
-                                <h1 className="text-3xl font-bold text-primary">
+                                <h2 className="text-2xl font-bold text-primary">
                                     {selectedRequisition.requisition_no || 'DRAFT'}
-                                </h1>
-                                <p className="text-gray-600">{selectedRequisition.position_title}</p>
+                                </h2>
+                                <p className="text-gray-600 mt-1">{selectedRequisition.position_title}</p>
                             </div>
                             <div className="flex gap-3">
                                 {selectedRequisition.status !== 'closed' && (
@@ -1471,7 +1457,7 @@
                                         {selectedRequisition.status === 'draft' && (
                                             <button
                                                 onClick={() => setCurrentPage('edit')}
-                                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
                                             >
                                                 ✏️ แก้ไข
                                             </button>
@@ -1484,7 +1470,7 @@
 
                         <WorkflowSteps currentStatus={selectedRequisition.status} />
 
-                        <div className="bg-white p-6 rounded-lg shadow-md">
+                        <div className="bg-white p-6 rounded-xl shadow-sm">
                             <h3 className="text-lg font-bold mb-4 text-primary">ข้อมูลคำขอ</h3>
                             <div className="grid grid-cols-2 gap-6">
                                 <div>
@@ -1527,7 +1513,7 @@
 
                         {/* Approval Sections */}
                         {selectedRequisition.cpo_approved_by && (
-                            <div className="bg-white p-6 rounded-lg shadow-md">
+                            <div className="bg-white p-6 rounded-xl shadow-sm">
                                 <h3 className="text-lg font-bold mb-4 text-primary">การอนุมัติ CPO</h3>
                                 <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
@@ -1550,49 +1536,24 @@
             };
 
             return (
-                <div className="flex h-screen bg-gray-50">
-                    {/* Sidebar */}
-                    <div className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-gradient-to-b from-primary to-secondary text-white transition-all duration-300 sidebar-transition`}>
-                        <div className="p-6 flex items-center justify-between">
-                            <h1 className={`font-bold text-lg ${!sidebarOpen && 'hidden'}`}>AMR HR</h1>
-                            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-white">
-                                {sidebarOpen ? '◀' : '▶'}
-                            </button>
-                        </div>
-
-                        <nav className="space-y-2 px-4">
-                            {[
-                                { key: 'dashboard', label: 'แดชบอร์ด', icon: '📊' },
-                                { key: 'requisitions', label: 'คำขอ', icon: '📋' },
-                                { key: 'create', label: 'สร้างใหม่', icon: '✚' },
-                            ].map(item => (
-                                <button
-                                    key={item.key}
-                                    onClick={() => setCurrentPage(item.key)}
-                                    className={`w-full text-left px-4 py-3 rounded-lg transition ${
-                                        currentPage === item.key ? 'bg-white bg-opacity-20' : 'hover:bg-white hover:bg-opacity-10'
-                                    }`}
-                                >
-                                    <span className="mr-3">{item.icon}</span>
-                                    <span className={!sidebarOpen && 'hidden'}>{item.label}</span>
-                                </button>
-                            ))}
-                        </nav>
-                    </div>
-
-                    {/* Main Content */}
-                    <div className="flex-1 overflow-auto">
-                        <div className="p-8">
-                            {loading && <div className="text-center text-gray-500">กำลังโหลด...</div>}
-                            {!loading && (
-                                <>
-                                    {currentPage === 'dashboard' && renderDashboard()}
-                                    {currentPage === 'requisitions' && renderRequisitionList()}
-                                    {currentPage === 'create' && renderCreateForm()}
-                                    {currentPage === 'detail' && renderDetailView()}
-                                </>
-                            )}
-                        </div>
+                <div className="min-h-screen bg-gray-50">
+                    <div className="max-w-7xl mx-auto p-8">
+                        {loading && <div className="text-center text-gray-500 py-12">กำลังโหลด...</div>}
+                        {!loading && (
+                            <>
+                                {currentPage === 'dashboard' && renderDashboard()}
+                                {currentPage === 'requisitions' && renderRequisitionList()}
+                                {currentPage === 'candidates' && renderRequisitionList()}
+                                {currentPage === 'create' && renderCreateForm()}
+                                {currentPage === 'detail' && renderDetailView()}
+                                {currentPage === 'edit' && selectedRequisition && (
+                                    <div className="space-y-6">
+                                        {renderPageHeader('Recruitment', 'ระบบสรรหาและคัดเลือกพนักงาน', '👥')}
+                                        <RequisitionForm initialData={selectedRequisition} onSave={handleRequisitionSaved} />
+                                    </div>
+                                )}
+                            </>
+                        )}
                     </div>
                 </div>
             );
