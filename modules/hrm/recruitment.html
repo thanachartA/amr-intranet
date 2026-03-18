@@ -315,114 +315,230 @@
             return labels[status] || status;
         };
 
-        // Signature Pad Component
-        const SignaturePad = ({ onSave, readOnly = false, signature = null }) => {
+        // Signature Pad Component — รองรับวาด, แนบไฟล์, และบันทึกรายบุคคล
+        const SignaturePad = ({ onSave, readOnly = false, signature = null, userEmail = null }) => {
             const canvasRef = useRef(null);
+            const containerRef = useRef(null);
+            const fileInputRef = useRef(null);
             const [isDrawing, setIsDrawing] = useState(false);
+            const [mode, setMode] = useState('draw'); // 'draw' | 'upload'
+            const [savedSig, setSavedSig] = useState(signature);
+            const [hasDrawn, setHasDrawn] = useState(false);
+            const [loadingMsg, setLoadingMsg] = useState('');
 
+            // โหลดลายเซ็นที่บันทึกไว้จาก DB ตาม email
             useEffect(() => {
-                if (readOnly && signature) return;
+                if (readOnly || !userEmail) return;
+                (async () => {
+                    try {
+                        const res = await fetch(
+                            `${SUPABASE_URL}/rest/v1/user_signatures?email=eq.${encodeURIComponent(userEmail)}&select=signature_data&limit=1`,
+                            { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY } }
+                        );
+                        const data = await res.json();
+                        if (data && data.length > 0 && data[0].signature_data) {
+                            setSavedSig(data[0].signature_data);
+                            onSave(data[0].signature_data);
+                        }
+                    } catch(e) { console.log('Load sig err:', e); }
+                })();
+            }, [userEmail]);
+
+            // Init canvas เมื่อ mode = draw
+            useEffect(() => {
+                if (readOnly || mode !== 'draw') return;
                 const canvas = canvasRef.current;
                 if (!canvas) return;
+                // Responsive: ปรับ canvas ตาม container width
+                const container = containerRef.current;
+                if (container) {
+                    canvas.width = Math.min(container.offsetWidth, 600);
+                }
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#f9f9f9';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.strokeStyle = '#333';
-                ctx.lineWidth = 2;
-            }, [readOnly, signature]);
+                ctx.strokeStyle = '#1a237e';
+                ctx.lineWidth = 2.5;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }, [readOnly, mode]);
 
-            const handleMouseDown = (e) => {
+            const getPos = (e) => {
+                const canvas = canvasRef.current;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+            };
+
+            const startDraw = (e) => {
                 if (readOnly) return;
+                e.preventDefault();
                 setIsDrawing(true);
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const ctx = canvas.getContext('2d');
+                setHasDrawn(true);
+                const { x, y } = getPos(e);
+                const ctx = canvasRef.current.getContext('2d');
                 ctx.beginPath();
-                ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+                ctx.moveTo(x, y);
             };
 
-            const handleMouseMove = (e) => {
-                if (!isDrawing || readOnly) return;
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const ctx = canvas.getContext('2d');
-                ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
-                ctx.stroke();
-            };
-
-            const handleMouseUp = () => {
-                setIsDrawing(false);
-            };
-
-            const handleTouchStart = (e) => {
-                if (readOnly) return;
-                setIsDrawing(true);
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const touch = e.touches[0];
-                const ctx = canvas.getContext('2d');
-                ctx.beginPath();
-                ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
-            };
-
-            const handleTouchMove = (e) => {
+            const draw = (e) => {
                 if (!isDrawing || readOnly) return;
                 e.preventDefault();
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const touch = e.touches[0];
-                const ctx = canvas.getContext('2d');
-                ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+                const { x, y } = getPos(e);
+                const ctx = canvasRef.current.getContext('2d');
+                ctx.lineTo(x, y);
                 ctx.stroke();
             };
 
-            const handleTouchEnd = () => {
-                setIsDrawing(false);
-            };
+            const endDraw = () => { setIsDrawing(false); };
 
             const handleClear = () => {
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#f9f9f9';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
+                setHasDrawn(false);
+                setSavedSig(null);
             };
 
-            const handleSave = () => {
-                const canvas = canvasRef.current;
-                const data = canvas.toDataURL('image/png');
-                onSave(data);
+            // แนบไฟล์ภาพลายเซ็น
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                    alert('กรุณาเลือกไฟล์รูปภาพ (PNG, JPG)');
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    setSavedSig(ev.target.result);
+                    onSave(ev.target.result);
+                };
+                reader.readAsDataURL(file);
             };
 
-            if (readOnly && signature) {
+            // บันทึกลายเซ็น — save ลง DB ต่อ email + ส่งกลับ form
+            const handleSave = async () => {
+                let sigData;
+                if (mode === 'draw') {
+                    const canvas = canvasRef.current;
+                    sigData = canvas.toDataURL('image/png');
+                } else if (savedSig) {
+                    sigData = savedSig;
+                } else {
+                    alert('กรุณาวาดหรืออัพโหลดลายเซ็นก่อน');
+                    return;
+                }
+                setSavedSig(sigData);
+                onSave(sigData);
+
+                // บันทึกลง Supabase per user
+                if (userEmail) {
+                    setLoadingMsg('กำลังบันทึก...');
+                    try {
+                        await fetch(`${SUPABASE_URL}/rest/v1/user_signatures`, {
+                            method: 'POST',
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                                'Content-Type': 'application/json',
+                                'Prefer': 'resolution=merge-duplicates'
+                            },
+                            body: JSON.stringify({ email: userEmail, signature_data: sigData })
+                        });
+                        setLoadingMsg('✅ บันทึกลายเซ็นเรียบร้อย');
+                    } catch(e) {
+                        setLoadingMsg('❌ บันทึกไม่สำเร็จ');
+                    }
+                    setTimeout(() => setLoadingMsg(''), 2000);
+                }
+            };
+
+            if (readOnly && (signature || savedSig)) {
                 return (
-                    <div className="signature-display">
-                        <img src={signature} alt="signature" style={{ maxWidth: '100%', maxHeight: '150px' }} />
+                    <div className="signature-display" style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px', background: '#f9f9f9' }}>
+                        <img src={signature || savedSig} alt="signature" style={{ maxWidth: '100%', maxHeight: '120px', objectFit: 'contain' }} />
                     </div>
                 );
             }
 
             return (
-                <div>
-                    <canvas
-                        ref={canvasRef}
-                        width={350}
-                        height={150}
-                        className="signature-canvas w-full mb-2"
-                        onMouseDown={handleMouseDown}
-                        onMouseMove={handleMouseMove}
-                        onMouseUp={handleMouseUp}
-                        onTouchStart={handleTouchStart}
-                        onTouchMove={handleTouchMove}
-                        onTouchEnd={handleTouchEnd}
-                    />
-                    <div className="flex gap-2">
-                        <button onClick={handleClear} className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">
-                            ล้างลายเซ็น
+                <div ref={containerRef}>
+                    {/* แสดงลายเซ็นที่บันทึกไว้ */}
+                    {savedSig && (
+                        <div style={{ marginBottom: '12px', padding: '8px', border: '2px solid #4caf50', borderRadius: '8px', background: '#e8f5e9', textAlign: 'center' }}>
+                            <div style={{ fontSize: '12px', color: '#2e7d32', fontWeight: '600', marginBottom: '4px' }}>✅ ลายเซ็นปัจจุบัน</div>
+                            <img src={savedSig} alt="saved signature" style={{ maxWidth: '100%', maxHeight: '80px', objectFit: 'contain' }} />
+                        </div>
+                    )}
+
+                    {/* Toggle mode: วาด / แนบไฟล์ */}
+                    <div className="flex gap-2 mb-3">
+                        <button
+                            onClick={() => setMode('draw')}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition ${mode === 'draw' ? 'bg-blue-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                        >
+                            ✏️ วาดลายเซ็น
                         </button>
-                        <button onClick={handleSave} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                            บันทึกลายเซ็น
+                        <button
+                            onClick={() => setMode('upload')}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition ${mode === 'upload' ? 'bg-blue-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                        >
+                            📎 แนบไฟล์ภาพ
                         </button>
                     </div>
+
+                    {mode === 'draw' ? (
+                        <div>
+                            <canvas
+                                ref={canvasRef}
+                                width={500}
+                                height={150}
+                                style={{ width: '100%', height: '150px', border: '2px solid #ccc', cursor: 'crosshair', background: '#f9f9f9', borderRadius: '4px', touchAction: 'none' }}
+                                onMouseDown={startDraw}
+                                onMouseMove={draw}
+                                onMouseUp={endDraw}
+                                onMouseLeave={endDraw}
+                                onTouchStart={startDraw}
+                                onTouchMove={draw}
+                                onTouchEnd={endDraw}
+                            />
+                            <div className="flex gap-2 mt-2">
+                                <button onClick={handleClear} className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 text-sm">
+                                    🗑️ ล้างลายเซ็น
+                                </button>
+                                <button onClick={handleSave} disabled={!hasDrawn} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 text-sm">
+                                    💾 บันทึกลายเซ็น
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div>
+                            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} />
+                            <div
+                                onClick={() => fileInputRef.current.click()}
+                                style={{ border: '2px dashed #90caf9', borderRadius: '8px', padding: '30px', textAlign: 'center', cursor: 'pointer', background: '#e3f2fd', transition: 'all 0.2s' }}
+                                onMouseOver={e => e.currentTarget.style.borderColor = '#1565c0'}
+                                onMouseOut={e => e.currentTarget.style.borderColor = '#90caf9'}
+                            >
+                                <div style={{ fontSize: '36px', marginBottom: '8px' }}>📤</div>
+                                <div style={{ color: '#1565c0', fontWeight: '600' }}>คลิกเพื่อเลือกไฟล์ภาพลายเซ็น</div>
+                                <div style={{ color: '#666', fontSize: '12px', marginTop: '4px' }}>รองรับ PNG, JPG, GIF</div>
+                            </div>
+                            <button onClick={handleSave} disabled={!savedSig} className="w-full mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 text-sm">
+                                💾 บันทึกลายเซ็น
+                            </button>
+                        </div>
+                    )}
+
+                    {loadingMsg && (
+                        <div style={{ marginTop: '8px', textAlign: 'center', fontSize: '13px', color: loadingMsg.includes('✅') ? '#2e7d32' : loadingMsg.includes('❌') ? '#c62828' : '#666' }}>
+                            {loadingMsg}
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -654,6 +770,20 @@
                             <div style={{ padding: '4px', backgroundColor: '#fff' }}>{formatDate(requisition.requested_by_date)}</div>
                         </div>
                     </div>
+
+                    {/* Requester Signature */}
+                    {requisition.requested_by_signature && (
+                        <div style={{ border: '1px solid #999', padding: '6px', marginBottom: '8px' }}>
+                            <div style={{ fontWeight: '600', backgroundColor: '#f5f5f5', padding: '4px', marginBottom: '8px' }}>ลายเซ็นผู้เสนอขอ / Requester Signature</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', padding: '4px', backgroundColor: '#fff' }}>
+                                <img src={requisition.requested_by_signature} alt="Requester Signature" style={{ maxHeight: '60px', objectFit: 'contain' }} />
+                                <div style={{ fontSize: '10px', color: '#555' }}>
+                                    <div>{requisition.requested_by_name}</div>
+                                    <div>{requisition.requested_by_position}</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* CPO Approval Section */}
                     {requisition.cpo_approved_by && (
@@ -1094,7 +1224,7 @@
 
                         <div>
                             <label className="block text-sm font-semibold mb-2">ลายเซ็นผู้ยื่นคำขอ</label>
-                            <SignaturePad onSave={handleSignatureSave} />
+                            <SignaturePad onSave={handleSignatureSave} userEmail={formData.requested_by_email} />
                         </div>
                     </div>
 
