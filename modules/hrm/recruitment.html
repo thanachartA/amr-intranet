@@ -622,6 +622,7 @@
             const exportToPDF = async () => {
                 try {
                     const element = containerRef.current;
+                    if (!element) { alert('ไม่พบเนื้อหา PDF'); return; }
                     const canvas = await html2canvas(element, {
                         scale: 2,
                         logging: false,
@@ -629,7 +630,7 @@
                     });
 
                     const imgData = canvas.toDataURL('image/png');
-                    const imgWidth = 210; // A4 width in mm
+                    const imgWidth = 210;
                     const imgHeight = (canvas.height * imgWidth) / canvas.width;
                     const pdf = new jspdf.jsPDF({
                         orientation: 'portrait',
@@ -641,7 +642,7 @@
                     let position = 0;
 
                     pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-                    heightLeft -= 297; // A4 height
+                    heightLeft -= 297;
 
                     while (heightLeft >= 0) {
                         position = heightLeft - imgHeight;
@@ -653,17 +654,24 @@
                     pdf.save(`requisition-${requisition.requisition_no}.pdf`);
                 } catch (error) {
                     console.error('PDF Export Error:', error);
-                    alert('เกิดข้อผิดพลาดในการส่งออก PDF');
+                    alert('เกิดข้อผิดพลาดในการส่งออก PDF: ' + error.message);
                 }
             };
 
             return (
-                <button
-                    onClick={exportToPDF}
-                    className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold"
-                >
-                    📄 ดาวน์โหลด PDF
-                </button>
+                <div>
+                    <button
+                        onClick={exportToPDF}
+                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold"
+                    >
+                        📄 ดาวน์โหลด PDF
+                    </button>
+                    <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
+                        <div ref={containerRef}>
+                            <PDFContent requisition={requisition} />
+                        </div>
+                    </div>
+                </div>
             );
         };
 
